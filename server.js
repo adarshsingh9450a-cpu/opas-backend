@@ -15,7 +15,7 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-// Test Route (App ka naam yahan set kar diya hai)
+// 1. Test Route
 app.get('/', async (req, res) => {
     try {
         const client = await pool.connect();
@@ -27,7 +27,7 @@ app.get('/', async (req, res) => {
     }
 });
 
-// Database Setup Route (Tables banane ke liye)
+// 2. Database Setup Route (Table banane ke liye)
 app.get('/setup', async (req, res) => {
     try {
         const client = await pool.connect();
@@ -46,9 +46,7 @@ app.get('/setup', async (req, res) => {
     }
 });
 
-// YAHAN HAIN NAYE ROUTES JO MISSING THE! 👇
-
-// Data lane ka rasta (GET)
+// 3. Data Lane ka Rasta (GET)
 app.get('/api/clients', async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM clients');
@@ -63,7 +61,7 @@ app.get('/api/clients', async (req, res) => {
     }
 });
 
-// Data save karne ka rasta (POST)
+// 4. Data Save karne ka Rasta (POST)
 app.post('/api/clients', async (req, res) => {
     try {
         const { mobile, data } = req.body;
@@ -81,7 +79,7 @@ app.post('/api/clients', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`OPAS Micro Finance Pvt Ltd Server running on port ${PORT}`);
 });
