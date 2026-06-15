@@ -11,34 +11,32 @@ app.use(express.json());
 
 // PostgreSQL Database Connection Setup
 const pool = new Pool({
-    // Niche single quotes '' ke andar apni Render wali URL paste karna
     connectionString: 'postgresql://opas_data_base_user:ATp9M9d3VZFAVF4tqjThAV66Dwm1Pn8O@dpg-d8ns6su7r5hc73b5oi90-a.singapore-postgres.render.com/opas_data_base',
     ssl: { rejectUnauthorized: false }
 });
 
-// Test Route
+// Test Route (App ka naam yahan set kar diya hai)
 app.get('/', async (req, res) => {
     try {
         const client = await pool.connect();
-        res.send("Database connection SUCCESSFUL! OPAS Backend zinda hai.");
+        res.send("Database connection SUCCESSFUL! OPAS Micro Finance Pvt Ltd Backend zinda hai. 🚀");
         client.release();
     } catch (err) {
         console.error(err);
         res.send("Database connection Error: " + err);
     }
 });
+
 // Database Setup Route (Tables banane ke liye)
 app.get('/setup', async (req, res) => {
     try {
         const client = await pool.connect();
-        
         const createTableQuery = `
             CREATE TABLE IF NOT EXISTS clients (
                 mobile VARCHAR(15) PRIMARY KEY,
                 data JSONB
             );
         `;
-        
         await client.query(createTableQuery);
         client.release();
         res.send("Badhai ho! Database mein Tables successfully ban gayi hain. 🚀");
@@ -48,7 +46,42 @@ app.get('/setup', async (req, res) => {
     }
 });
 
+// YAHAN HAIN NAYE ROUTES JO MISSING THE! 👇
+
+// Data lane ka rasta (GET)
+app.get('/api/clients', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM clients');
+        const dbObj = {};
+        result.rows.forEach(row => {
+            dbObj[row.mobile] = row.data;
+        });
+        res.json(dbObj);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send("Error fetching data");
+    }
+});
+
+// Data save karne ka rasta (POST)
+app.post('/api/clients', async (req, res) => {
+    try {
+        const { mobile, data } = req.body;
+        const query = `
+            INSERT INTO clients (mobile, data) 
+            VALUES ($1, $2) 
+            ON CONFLICT (mobile) 
+            DO UPDATE SET data = $2
+        `;
+        await pool.query(query, [mobile, data]);
+        res.send("Data Saved!");
+    } catch (err) {
+        console.error(err);
+        res.status(500).send("Error saving data");
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`OPAS Micro Finance Pvt Ltd Server running on port ${PORT}`);
 });
