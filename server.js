@@ -11,7 +11,7 @@ app.use(express.json());
 
 // PostgreSQL Database Connection Setup
 const pool = new Pool({
-    connectionString: 'postgresql://opas_data_base_user:ATp9M9d3VZFAVF4tqjThAV66Dwm1Pn8O@dpg-d8ns6su7r5hc73b5oi90-a.singapore-postgres.render.com/opas_data_base',
+    connectionString: 'postgresql://neondb_owner:npg_uGgDcJnR92Pt@ep-dry-bar-ado4xlns.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require',
     ssl: { rejectUnauthorized: false }
 });
 
