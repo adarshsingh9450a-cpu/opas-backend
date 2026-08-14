@@ -83,13 +83,52 @@ app.post('/api/clients', async (req, res) => {
             INSERT INTO clients (mobile, data) 
             VALUES ($1, $2) 
             ON CONFLICT (mobile) 
-            DO UPDATE SET data = $2
+            DO UPDATE SET data = EXCLUDED.data
         `;
         await pool.query(query, [mobile, data]);
         res.send("Data Successfully Saved!");
     } catch (err) {
         console.error(err);
         res.status(500).send("Error saving data");
+    }
+});
+
+// 5. Bulk Data Save karne ka Rasta (Day-End ke liye POST)
+app.post('/api/clients/bulk', async (req, res) => {
+    // Transaction shuru karne ke liye client connect karte hain
+    const client = await pool.connect();
+    try {
+        const { clients } = req.body;
+        if (!clients || !Array.isArray(clients)) {
+            return res.status(400).send("Invalid bulk payload format!");
+        }
+
+        await client.query('BEGIN'); // SQL Transaction Start
+        
+        const query = `
+            INSERT INTO clients (mobile, data) 
+            VALUES ($1, $2) 
+            ON CONFLICT (mobile) 
+            DO UPDATE SET data = $2
+        `;
+        
+        // Loop through all clients safely
+        for (let c of clients) {
+            if (c.data === null || c.data === "null") {
+                await client.query('DELETE FROM clients WHERE mobile = $1', [c.mobile]);
+            } else {
+                await client.query(query, [c.mobile, c.data]);
+            }
+        }
+        
+        await client.query('COMMIT'); // Data safe hai toh save kar do
+        res.send("Bulk Data Successfully Saved!");
+    } catch (err) {
+        await client.query('ROLLBACK'); // Agar kisi ek mein bhi error aaya, toh saara revert kar do
+        console.error("Bulk sync error:", err);
+        res.status(500).send("Error saving bulk data");
+    } finally {
+        client.release(); // Connection wapas pool mein bhej do
     }
 });
 
