@@ -1,7 +1,12 @@
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
+const jwt = require('jsonwebtoken'); // 🌟 NAYA: JWT Import
 require('dotenv').config();
+
+// 🌟 NAYA: Security Keys
+const SECRET_KEY = process.env.JWT_SECRET || 'OPAS_SUPER_SECRET_KEY_2026'; 
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Pass@1989';
 
 const app = express();
 
@@ -15,6 +20,52 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false },
     max: 10, // Neon DB ke connections limit ko handle karne ke liye
     idleTimeoutMillis: 30000
+});
+
+// ==========================================
+// 🌟 NAYA: JWT AUTHENTICATION MIDDLEWARE
+// ==========================================
+const verifyToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader) return res.status(403).json({ success: false, message: "Token required for authentication." });
+    
+    const token = authHeader.split(" ")[1];
+    try {
+        const decoded = jwt.verify(token, SECRET_KEY);
+        req.user = decoded;
+        next();
+    } catch (err) {
+        return res.status(401).json({ success: false, message: "Invalid Token." });
+    }
+};
+
+// ==========================================
+// 🌟 NAYA: SECURE LOGIN ROUTE
+// ==========================================
+app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+    
+    // 1. Admin (Head) Check
+    if (username === 'head01' && password === ADMIN_PASSWORD) {
+        const token = jwt.sign({ role: 'head', username }, SECRET_KEY, { expiresIn: '48h' });
+        return res.json({ success: true, role: 'head', token });
+    }
+
+    // 2. Staff Check (Database se)
+    try {
+        const result = await pool.query("SELECT data FROM clients WHERE mobile = 'SYSTEM_SETTINGS'");
+        const sysData = result.rows[0]?.data;
+        
+        if (sysData && sysData.staff && sysData.staff[username]) {
+            if (sysData.staff[username].pass === password) {
+                const token = jwt.sign({ role: 'staff', username }, SECRET_KEY, { expiresIn: '48h' });
+                return res.json({ success: true, role: 'staff', token });
+            }
+        }
+        res.status(401).json({ success: false, message: "Galat Username ya Password!" });
+    } catch (err) {
+        res.status(500).json({ success: false, message: "Database Error" });
+    }
 });
 
 // 1. Test Route (Optimized Connection)
@@ -63,8 +114,8 @@ app.get('/api/clients', async (req, res) => {
     }
 });
 
-// 4. Data Save karne ka Rasta (POST)
-app.post('/api/clients', async (req, res) => {
+// 4. Data Save karne ka Rasta (POST) - 🔒 SECURED
+app.post('/api/clients', verifyToken, async (req, res) => {
     try {
         const { mobile, data } = req.body;
 
@@ -93,8 +144,8 @@ app.post('/api/clients', async (req, res) => {
     }
 });
 
-// 5. Bulk Data Save karne ka Rasta (Day-End ke liye POST)
-app.post('/api/clients/bulk', async (req, res) => {
+// 5. Bulk Data Save karne ka Rasta (Day-End ke liye POST) - 🔒 SECURED
+app.post('/api/clients/bulk', verifyToken, async (req, res) => {
     // Transaction shuru karne ke liye client connect karte hain
     const client = await pool.connect();
     try {
