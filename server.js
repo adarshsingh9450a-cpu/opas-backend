@@ -12,11 +12,12 @@ const app = express();
 
 // Middleware
 // 🚀 FIX: Smart CORS (Web + Future Android App Support)
-const allowedOrigins = ['https://aapka-username.github.io', 'http://localhost:3000', 'capacitor://localhost', 'http://localhost'];
+const allowedOrigins = ['https://dulcet-yeot-abd9fa.netlify.app', 'http://localhost:3000', 'capacitor://localhost', 'http://localhost'];
 app.use(cors({
     origin: function (origin, callback) {
-        // Agar request mobile app (no origin) se hai, ya hamari list mein hai, toh allow karo
-        if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.onrender.com')) {
+        // 🚀 FIX: Strict Origin Check to prevent Postman/cURL abuse. 
+        // Note: Capacitor apps use capacitor://localhost which is safely handled in allowedOrigins
+        if (allowedOrigins.includes(origin) || (origin && origin.endsWith('.onrender.com'))) {
             callback(null, true);
         } else {
             callback(new Error('Blocked by OPAS Security (CORS)'));
@@ -25,14 +26,15 @@ app.use(cors({
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(express.json({ limit: '10mb' })); // Payload size badha diya 800+ clients ke liye
+app.use(express.json({ limit: '50mb' })); // 🌟 NAYA: 50MB limit Day-End bulk array array ke liye
 
 // PostgreSQL Database Connection Setup
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    max: 10, // Neon DB ke connections limit ko handle karne ke liye
-    idleTimeoutMillis: 30000
+    max: 40, // 🚀 FIX: Increased to 40 for handling multiple staff Day-End syncs
+    idleTimeoutMillis: 10000, // 🚀 FIX: Free up dead connections in 10s instead of 30s
+    connectionTimeoutMillis: 5000
 });
 
 pool.on('error', (err, client) => {
@@ -99,8 +101,9 @@ app.get('/', async (req, res) => {
 // 2. Database Setup Route (Secret Key Protected)
 app.get('/setup', async (req, res) => {
     const { key } = req.query;
-    // Sirf 'opas2026' password daalne par hi setup chalega
-    if (key !== 'opas2026') {
+    // Environment variable se aayega, warna fallback password
+    const SETUP_KEY = process.env.SETUP_KEY || 'opas2026';
+    if (key !== SETUP_KEY) {
         return res.status(403).send("Access Denied! Galat Secret Key.");
     }
 
@@ -151,7 +154,9 @@ app.get('/setup', async (req, res) => {
 // ==========================================
 app.get('/migrate', async (req, res) => {
     const { key } = req.query;
-    if (key !== 'opas2026') return res.status(403).send("Access Denied! Galat Secret Key.");
+    // 🚀 FIX: Use Secure Environment Variable instead of hardcoded string
+    const SETUP_KEY = process.env.SETUP_KEY || 'opas2026';
+    if (key !== SETUP_KEY) return res.status(403).send("Access Denied! Galat Secret Key.");
 
     let client;
     try {
@@ -226,8 +231,8 @@ app.get('/migrate', async (req, res) => {
     }
 });
 
-// 3. Data Lane ka Rasta (GET) - 🚀 PAGINATION ENGINE ADDED
-app.get('/api/clients', async (req, res) => {
+// 3. Data Lane ka Rasta (GET) - 🚀 PAGINATION ENGINE ADDED & SECURED
+app.get('/api/clients', verifyToken, async (req, res) => {
     try {
         // 🚀 FIX: Cursor-Based Pagination (Zero Data Loss & High Speed)
         const limit = parseInt(req.query.limit) || 5000;
@@ -267,7 +272,10 @@ app.post('/api/clients', verifyToken, async (req, res) => {
 
         // 🌟 NAYA: Smart Interceptor - Nayi SQL tables aur Purane JSON ko Sync rakhne ke liye
         if (mobile === 'SYSTEM_SETTINGS') {
+            
+            // 1. Staff Sync (Upsert + DELETE Zombies)
             if (data.staff) {
+                const activeStaff = Object.keys(data.staff);
                 for (const [username, details] of Object.entries(data.staff)) {
                     await pool.query(
                         `INSERT INTO staff (username, password, name, branch, details) 
@@ -276,10 +284,43 @@ app.post('/api/clients', verifyToken, async (req, res) => {
                         [username, details.pass || '1234', details.name || username, details.branch || 'Unknown', details]
                     );
                 }
+                // 🚨 ZOMBIE KILLER: Delete fired staff from SQL so they can't login
+                if (activeStaff.length > 0) {
+                    await pool.query(`DELETE FROM staff WHERE username != ALL($1::varchar[]) AND username != 'head01'`, [activeStaff]);
+                } else {
+                    await pool.query(`DELETE FROM staff WHERE username != 'head01'`);
+                }
             }
+            
+            // 2. Loan Plans Sync
             if (data.loanPlans) {
+                const activePlans = data.loanPlans.map(p => p.id);
                 for (const plan of data.loanPlans) {
                     await pool.query(`INSERT INTO loan_plans (id, plan_data) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET plan_data = EXCLUDED.plan_data`, [plan.id, plan]);
+                }
+                if (activePlans.length > 0) {
+                    await pool.query(`DELETE FROM loan_plans WHERE id != ALL($1::varchar[])`, [activePlans]);
+                } else {
+                    await pool.query(`DELETE FROM loan_plans`);
+                }
+            }
+            
+            // 3. Branches & Centres Sync
+            if (data.branches && data.centres) {
+                const activeBranches = [];
+                for (const branch of data.branches) {
+                    const bId = 'b_' + branch.replace(/\s+/g, '_').toLowerCase();
+                    activeBranches.push(bId);
+                    await pool.query(`INSERT INTO branches_data (id, type, name, parent_branch, details) VALUES ($1, 'branch', $2, NULL, '{}') ON CONFLICT (id) DO NOTHING`, [bId, branch]);
+                }
+                for (const centre of data.centres) {
+                    activeBranches.push(centre.id);
+                    await pool.query(`INSERT INTO branches_data (id, type, name, parent_branch, details) VALUES ($1, 'centre', $2, $3, '{}') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_branch = EXCLUDED.parent_branch`, [centre.id, centre.name, centre.branch]);
+                }
+                if (activeBranches.length > 0) {
+                    await pool.query(`DELETE FROM branches_data WHERE id != ALL($1::varchar[])`, [activeBranches]);
+                } else {
+                    await pool.query(`DELETE FROM branches_data`);
                 }
             }
         }
@@ -299,7 +340,7 @@ app.post('/api/clients', verifyToken, async (req, res) => {
     }
 });
 
-// 5. Bulk Data Save karne ka Rasta (Day-End ke liye POST) - 🔒 SECURED
+// 5. Bulk Data Save karne ka Rasta (Day-End ke liye POST) - 🔒 SECURED & SUPERFAST
 app.post('/api/clients/bulk', verifyToken, async (req, res) => {
     let client;
     try {
@@ -311,30 +352,38 @@ app.post('/api/clients/bulk', verifyToken, async (req, res) => {
 
         await client.query('BEGIN'); // SQL Transaction Start
         
-        const query = `
-            INSERT INTO clients (mobile, data) 
-            VALUES ($1, $2) 
-            ON CONFLICT (mobile) 
-            DO UPDATE SET data = $2
-        `;
-        
-        // Loop through all clients safely
-        for (let c of clients) {
-            if (c.data === null || c.data === "null") {
-                await client.query('DELETE FROM clients WHERE mobile = $1', [c.mobile]);
-            } else {
-                await client.query(query, [c.mobile, c.data]);
-            }
+        // 1. Delete aur Upsert wale clients ko alag-alag filter kar lo
+        const toDelete = clients.filter(c => c.data === null || c.data === "null").map(c => String(c.mobile));
+        const toUpsert = clients.filter(c => c.data !== null && c.data !== "null");
+
+        // 2. Ek hi jhatke mein saare delete maaro (agar koi hai toh)
+        if (toDelete.length > 0) {
+            await client.query('DELETE FROM clients WHERE mobile = ANY($1::varchar[])', [toDelete]);
+        }
+
+        // 3. SUPERFAST BATCH UPSERT: Ek single query mein saare clients save
+        if (toUpsert.length > 0) {
+            const mobiles = toUpsert.map(c => String(c.mobile));
+            // 🚀 FIX: `pg` library array of objects ko [object Object] padhti hai. Isse prevent karne ke liye stringify karna zaroori hai.
+            const dataJsons = toUpsert.map(c => JSON.stringify(c.data)); 
+
+            const bulkQuery = `
+                INSERT INTO clients (mobile, data) 
+                SELECT * FROM UNNEST($1::varchar[], $2::jsonb[])
+                ON CONFLICT (mobile) 
+                DO UPDATE SET data = EXCLUDED.data
+            `;
+            await client.query(bulkQuery, [mobiles, dataJsons]);
         }
         
-        await client.query('COMMIT'); // Data safe hai toh save kar do
-        res.send("Bulk Data Successfully Saved!");
+        await client.query('COMMIT'); 
+        res.send("Bulk Data Successfully Saved in Lightning Speed!");
     } catch (err) {
-        await client.query('ROLLBACK'); // Agar kisi ek mein bhi error aaya, toh saara revert kar do
+        await client.query('ROLLBACK'); 
         console.error("Bulk sync error:", err);
         res.status(500).send("Error saving bulk data");
     } finally {
-        if (client) client.release(); // Connection wapas pool mein bhej do
+        if (client) client.release(); 
     }
 });
 
