@@ -15,11 +15,11 @@ const app = express();
 const allowedOrigins = ['https://dulcet-yeot-abd9fa.netlify.app', 'http://localhost:3000', 'capacitor://localhost', 'http://localhost'];
 app.use(cors({
     origin: function (origin, callback) {
-        // 🚀 FIX: Strict Origin Check to prevent Postman/cURL abuse. 
-        // Note: Capacitor apps use capacitor://localhost which is safely handled in allowedOrigins
-        if (allowedOrigins.includes(origin) || (origin && origin.endsWith('.onrender.com'))) {
+        // 🚀 FIX: Smart Origin Check (Allows Web, Mobile APKs, and Local VS Code testing)
+        if (!origin || allowedOrigins.includes(origin) || origin.startsWith('http://127.0.0.1') || origin.startsWith('http://localhost') || (origin && origin.endsWith('.onrender.com'))) {
             callback(null, true);
         } else {
+            console.warn(`Blocked by OPAS Security (CORS). Unauthorized origin: ${origin}`);
             callback(new Error('Blocked by OPAS Security (CORS)'));
         }
     },
