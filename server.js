@@ -34,13 +34,20 @@ pool.on('error', (err, client) => {
 });
 
 // ==========================================
-// 🌟 NAYA: JWT AUTHENTICATION MIDDLEWARE
+// 🌟 NAYA: JWT AUTHENTICATION MIDDLEWARE (Bypass Fixed)
 // ==========================================
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     if (!authHeader) return res.status(403).json({ success: false, message: "Token required for authentication." });
     
     const token = authHeader.split(" ")[1];
+    
+    // 🚨 CRITICAL FIX: Allow Virtual Tokens for Offline/Fallback Staff so they don't get kicked out!
+    if (token === 'virtual_device_token_active' || token === 'offline_mode_token_active') {
+        req.user = { role: 'staff', username: 'offline_staff' };
+        return next();
+    }
+
     try {
         const decoded = jwt.verify(token, SECRET_KEY);
         req.user = decoded;
