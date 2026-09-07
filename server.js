@@ -12,17 +12,9 @@ const app = express();
 
 // Middleware
 // 🚀 FIX: Smart CORS (Web + Future Android App Support)
-const allowedOrigins = ['https://dulcet-yeot-abd9fa.netlify.app', 'http://localhost:3000', 'capacitor://localhost', 'http://localhost'];
+// 🌟 FIX: Vercel, Netlify aur Mobile APK sabke liye CORS open kar diya
 app.use(cors({
-    origin: function (origin, callback) {
-        // 🚀 FIX: Smart Origin Check (Allows Web, Mobile APKs, and Local VS Code testing)
-        if (!origin || allowedOrigins.includes(origin) || origin.startsWith('http://127.0.0.1') || origin.startsWith('http://localhost') || (origin && origin.endsWith('.onrender.com'))) {
-            callback(null, true);
-        } else {
-            console.warn(`Blocked by OPAS Security (CORS). Unauthorized origin: ${origin}`);
-            callback(new Error('Blocked by OPAS Security (CORS)'));
-        }
-    },
+    origin: '*', 
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
