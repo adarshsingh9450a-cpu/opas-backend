@@ -51,27 +51,50 @@ const verifyToken = (req, res, next) => {
 };
 
 // ==========================================
-// 🌟 NAYA: SECURE LOGIN ROUTE
+// 🌟 NAYA: SECURE LOGIN ROUTE (BUG FREE)
 // ==========================================
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
+    const u = (username || '').trim().toLowerCase();
     
     // 1. Admin (Head) Check
-    if (username === 'head01' && password === ADMIN_PASSWORD) {
-        const token = jwt.sign({ role: 'head', username }, SECRET_KEY, { expiresIn: '48h' });
-        return res.json({ success: true, role: 'head', token });
+    if (u === 'head01' || u === 'admin') {
+        if (password === ADMIN_PASSWORD) {
+            const token = jwt.sign({ role: 'head', username: 'head01' }, SECRET_KEY, { expiresIn: '48h' });
+            return res.json({ success: true, role: 'head', token });
+        }
     }
 
-    // 2. Staff Check (Nayi SQL Table se - Fast & Secure)
+    // 2. Staff Check (SQL Table + JSON Fallback)
     try {
-        const result = await pool.query("SELECT password FROM staff WHERE username = $1", [username]);
+        // ILIKE case-insensitivity ke liye hai (Raju aur raju dono match karenge)
+        const result = await pool.query("SELECT username, password FROM staff WHERE username ILIKE $1", [u]);
         
         if (result.rows.length > 0) {
             if (result.rows[0].password === password) {
-                const token = jwt.sign({ role: 'staff', username }, SECRET_KEY, { expiresIn: '48h' });
-                return res.json({ success: true, role: 'staff', token });
+                const token = jwt.sign({ role: 'staff', username: result.rows[0].username }, SECRET_KEY, { expiresIn: '48h' });
+                return res.json({ success: true, role: 'staff', username: result.rows[0].username, token });
+            }
+        } 
+        
+        // 🚀 CRITICAL FIX: Agar SQL 'staff' table khaali hai (Migration miss ho gaya ho), toh JSON memory check karega
+        const sysRes = await pool.query("SELECT data FROM clients WHERE mobile = 'SYSTEM_SETTINGS'");
+        if (sysRes.rows.length > 0) {
+            const sysData = sysRes.rows[0].data;
+            const realKey = Object.keys(sysData.staff || {}).find(k => k.toLowerCase() === u);
+            if (realKey && sysData.staff[realKey].pass === password) {
+                
+                // Auto-fix: Future ke liye SQL mein insert kar diya
+                await pool.query(
+                    `INSERT INTO staff (username, password, name, branch, details) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (username) DO NOTHING`,
+                    [realKey, password, sysData.staff[realKey].name, sysData.staff[realKey].branch, sysData.staff[realKey]]
+                );
+                
+                const token = jwt.sign({ role: 'staff', username: realKey }, SECRET_KEY, { expiresIn: '48h' });
+                return res.json({ success: true, role: 'staff', username: realKey, token });
             }
         }
+
         res.status(401).json({ success: false, message: "Galat Username ya Password!" });
     } catch (err) {
         console.error("Login Error:", err);
