@@ -36,13 +36,7 @@ pool.on('error', (err, client) => {
 // ==========================================
 // 🌟 NAYA: JWT AUTHENTICATION MIDDLEWARE (Bypass Fixed)
 // ==========================================
-const verifyToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader) return res.status(403).json({ success: false, message: "Token required for authentication." });
-    
-    const token = authHeader.split(" ")[1];
-    
-    // ==========================================
+// ==========================================
 // 🌟 NAYA: SECURE JWT AUTHENTICATION MIDDLEWARE
 // ==========================================
 const verifyToken = (req, res, next) => {
@@ -58,15 +52,6 @@ const verifyToken = (req, res, next) => {
         next();
     } catch (err) {
         return res.status(401).json({ success: false, message: "Invalid Token or Session Expired." });
-    }
-};
-
-    try {
-        const decoded = jwt.verify(token, SECRET_KEY);
-        req.user = decoded;
-        next();
-    } catch (err) {
-        return res.status(401).json({ success: false, message: "Invalid Token." });
     }
 };
 
@@ -292,6 +277,7 @@ app.get('/api/clients', verifyToken, async (req, res) => {
 
 // 4. Data Save karne ka Rasta (POST) - 🔒 SECURED
 app.post('/api/clients', verifyToken, async (req, res) => {
+    let client;
     try {
         const { mobile, data } = req.body;
 
@@ -299,9 +285,14 @@ app.post('/api/clients', verifyToken, async (req, res) => {
             return res.status(400).send("Mobile number is required!");
         }
 
+        client = await pool.connect();
+        await client.query('BEGIN'); // 🚀 BILL SAVER FIX: Ek transaction me saare loops execute honge
+
         // 🚨 THE ZOMBIE KILLER: Agar frontend se delete order aaye, toh DB se permanently uda do
         if (data === null || data === "null") {
-            await pool.query('DELETE FROM clients WHERE mobile = $1', [mobile]);
+            await client.query('DELETE FROM clients WHERE mobile = $1', [mobile]);
+            await client.query('COMMIT');
+            client.release();
             return res.send("Client permanently wiped from Database!");
         }
 
@@ -312,18 +303,17 @@ app.post('/api/clients', verifyToken, async (req, res) => {
             if (data.staff) {
                 const activeStaff = Object.keys(data.staff);
                 for (const [username, details] of Object.entries(data.staff)) {
-                    await pool.query(
+                    await client.query(
                         `INSERT INTO staff (username, password, name, branch, details) 
                          VALUES ($1, $2, $3, $4, $5) 
                          ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, name = EXCLUDED.name, branch = EXCLUDED.branch, details = EXCLUDED.details`,
                         [username, details.pass || '1234', details.name || username, details.branch || 'Unknown', details]
                     );
                 }
-                // 🚨 ZOMBIE KILLER: Delete fired staff from SQL so they can't login
                 if (activeStaff.length > 0) {
-                    await pool.query(`DELETE FROM staff WHERE username != ALL($1::varchar[]) AND username != 'head01'`, [activeStaff]);
+                    await client.query(`DELETE FROM staff WHERE username != ALL($1::varchar[]) AND username != 'head01'`, [activeStaff]);
                 } else {
-                    await pool.query(`DELETE FROM staff WHERE username != 'head01'`);
+                    await client.query(`DELETE FROM staff WHERE username != 'head01'`);
                 }
             }
             
@@ -331,12 +321,12 @@ app.post('/api/clients', verifyToken, async (req, res) => {
             if (data.loanPlans) {
                 const activePlans = data.loanPlans.map(p => p.id);
                 for (const plan of data.loanPlans) {
-                    await pool.query(`INSERT INTO loan_plans (id, plan_data) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET plan_data = EXCLUDED.plan_data`, [plan.id, plan]);
+                    await client.query(`INSERT INTO loan_plans (id, plan_data) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET plan_data = EXCLUDED.plan_data`, [plan.id, plan]);
                 }
                 if (activePlans.length > 0) {
-                    await pool.query(`DELETE FROM loan_plans WHERE id != ALL($1::varchar[])`, [activePlans]);
+                    await client.query(`DELETE FROM loan_plans WHERE id != ALL($1::varchar[])`, [activePlans]);
                 } else {
-                    await pool.query(`DELETE FROM loan_plans`);
+                    await client.query(`DELETE FROM loan_plans`);
                 }
             }
             
@@ -346,16 +336,16 @@ app.post('/api/clients', verifyToken, async (req, res) => {
                 for (const branch of data.branches) {
                     const bId = 'b_' + branch.replace(/\s+/g, '_').toLowerCase();
                     activeBranches.push(bId);
-                    await pool.query(`INSERT INTO branches_data (id, type, name, parent_branch, details) VALUES ($1, 'branch', $2, NULL, '{}') ON CONFLICT (id) DO NOTHING`, [bId, branch]);
+                    await client.query(`INSERT INTO branches_data (id, type, name, parent_branch, details) VALUES ($1, 'branch', $2, NULL, '{}') ON CONFLICT (id) DO NOTHING`, [bId, branch]);
                 }
                 for (const centre of data.centres) {
                     activeBranches.push(centre.id);
-                    await pool.query(`INSERT INTO branches_data (id, type, name, parent_branch, details) VALUES ($1, 'centre', $2, $3, '{}') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_branch = EXCLUDED.parent_branch`, [centre.id, centre.name, centre.branch]);
+                    await client.query(`INSERT INTO branches_data (id, type, name, parent_branch, details) VALUES ($1, 'centre', $2, $3, '{}') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_branch = EXCLUDED.parent_branch`, [centre.id, centre.name, centre.branch]);
                 }
                 if (activeBranches.length > 0) {
-                    await pool.query(`DELETE FROM branches_data WHERE id != ALL($1::varchar[])`, [activeBranches]);
+                    await client.query(`DELETE FROM branches_data WHERE id != ALL($1::varchar[])`, [activeBranches]);
                 } else {
-                    await pool.query(`DELETE FROM branches_data`);
+                    await client.query(`DELETE FROM branches_data`);
                 }
             }
         }
@@ -367,11 +357,16 @@ app.post('/api/clients', verifyToken, async (req, res) => {
             ON CONFLICT (mobile) 
             DO UPDATE SET data = EXCLUDED.data
         `;
-        await pool.query(query, [mobile, data]);
+        await client.query(query, [mobile, data]);
+        
+        await client.query('COMMIT'); // 🚀 Save all queries in 1 millisecond block!
         res.send("Data Successfully Saved!");
     } catch (err) {
+        if (client) await client.query('ROLLBACK');
         console.error(err);
         res.status(500).send("Error saving data");
+    } finally {
+        if (client) client.release(); // Free up pool connection immediately
     }
 });
 
@@ -414,7 +409,7 @@ app.post('/api/clients/bulk', verifyToken, async (req, res) => {
         await client.query('COMMIT'); 
         res.send("Bulk Data Successfully Saved in Lightning Speed!");
     } catch (err) {
-        await client.query('ROLLBACK'); 
+        if (client) await client.query('ROLLBACK'); // 🚨 CRASH FIX: Safe Rollback
         console.error("Bulk sync error:", err);
         res.status(500).send("Error saving bulk data");
     } finally {
